@@ -5,6 +5,8 @@ services:
     build: .
     ports:
       - "3000:3000"
+    env_file:
+      - .env
     environment:
       MONGO_URI: mongodb://mongo:27017/water_gas_db
     depends_on:
