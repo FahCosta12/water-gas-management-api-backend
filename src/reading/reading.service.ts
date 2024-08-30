@@ -16,6 +16,12 @@ export class ReadingService {
     async create(createReadingDto: CreateReadingDto): Promise<any> {
         const { customer_code, measure_datetime, measure_type } = createReadingDto;
 
+        // Validação e preocessamento de imagem Base64
+        const imageBase64 = createReadingDto.image;
+
+        // Se a imagem tiver o prefico "data:image/png;base64,", remove-o
+        const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+
         // Validação de leitura duplicada
         const existingReading = await this.readingModel.findOne({
             customer_code,
@@ -34,8 +40,9 @@ export class ReadingService {
         }
 
         // Chamando API externa para extrair o valor da imagem (simulção)
-        const measure_value = this.extractMeasureFromImage(createReadingDto.image);
+        const measure_value = this.extractMeasureFromImage(base64Data);
 
+        // Criação do documento de leitura
         const reading = new this.readingModel({
             ...createReadingDto,
             measure_value,
