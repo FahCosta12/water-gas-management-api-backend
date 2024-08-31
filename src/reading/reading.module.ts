@@ -6,9 +6,9 @@ import { Reading, ReadingSchema } from './schemas/reading.schema';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([{name: Reading.name, schema: ReadingSchema}]),
+    MongooseModule.forFeature([{ name: Reading.name, schema: ReadingSchema }]),
   ],
   providers: [ReadingService],
-  controllers:[ReadingController],
+  controllers: [ReadingController],
 })
 export class ReadingModule {}

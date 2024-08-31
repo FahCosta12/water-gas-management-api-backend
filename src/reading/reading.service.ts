@@ -1,28 +1,28 @@
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleAIFileManager } from "@google/generative-ai/server";
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
-import axios from 'axios';
+import * as fs from 'fs';
 import { Model } from 'mongoose';
+import * as path from 'path';
+import { promisify } from 'util';
 import { v4 as uuidv4 } from 'uuid';
+import { base64ToPngBlob } from "../utils/images";
 import { ConfirmReadingDto } from './dto/confirm-reading.dto';
 import { CreateReadingDto } from './dto/create-reading.dto';
 import { Reading, ReadingDocument } from './schemas/reading.schema';
+
 @Injectable()
 export class ReadingService {
     constructor(
         @InjectModel(Reading.name) private readonly readingModel: Model<ReadingDocument>,
-
+        private configService: ConfigService
     ) { }
 
     async create(createReadingDto: CreateReadingDto): Promise<any> {
-        const { customer_code, measure_datetime, measure_type } = createReadingDto;
+        const { customer_code, measure_datetime, measure_type, image } = createReadingDto;
 
-        // Validação e preocessamento de imagem Base64
-        const imageBase64 = createReadingDto.image;
-
-        // Se a imagem tiver o prefico "data:image/png;base64,", remove-o
-        const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
-
-        // Validação de leitura duplicada
         const existingReading = await this.readingModel.findOne({
             customer_code,
             measure_type,
@@ -39,50 +39,47 @@ export class ReadingService {
             );
         }
 
-        // Chamando API externa para extrair o valor da imagem (simulção)
-        const measure_value = this.extractMeasureFromImage(base64Data);
+        const measure_value = await this.extractMeasureFromImage(image);
 
-        // Criação do documento de leitura
         const reading = new this.readingModel({
             ...createReadingDto,
             measure_value,
             measure_uuid: uuidv4(),
-            image_url: 'https://storage.service.com/${uuidv4()}', //Simulação do link da imagem
+            image_url: image,
         });
 
         return reading.save()
     }
 
     private async extractMeasureFromImage(imageBase64: string): Promise<number> {
-        // Aqui vai chamar a API LLM ou IA para extrair a medida da imagem
-        const apiKey = process.env.GEMINI_API_KEY;
-        const geminiUrl = 'https://api.gemini.com/extract-measure'; // URL ficticia para simulação
+        const writeFile = promisify(fs.writeFile);
+        const unlink = promisify(fs.unlink);
+        const blob = base64ToPngBlob(imageBase64);
+        const tempFilePath = path.join(__dirname, "measure-img.png");
 
-        try {
-            const response = await axios.post(
-                geminiUrl,
-                {
-                    image: imageBase64,
-                },
-                {
-                    headers: {
-                        'Authorization': `Bearer ${apiKey}`,
-                        'Content-Type': 'application/json',
-                    },
-                },
-            );
+        await writeFile(tempFilePath, Buffer.from(await blob.arrayBuffer()));
 
-            if (response.data && response.data.measure_value) {
-                return response.data.measure_value;
-            } else {
-                throw new Error('Invalid response from Gemini API');
-            }
-        } catch (error) {
-            throw new HttpException(
-                'Erro ao extrair valor da image',
-                HttpStatus.INTERNAL_SERVER_ERROR,
-            );
-        }
+        const apiKey = this.configService.get<string>('GEMINI_API_KEY');
+        const fileManager = new GoogleAIFileManager(apiKey);
+        const uploadResponse = await fileManager.uploadFile(tempFilePath, {
+            mimeType: "image/png",
+            displayName: "measure-img",
+        });
+        const genAI = new GoogleGenerativeAI(apiKey);
+        const model = genAI.getGenerativeModel({
+            model: "gemini-1.5-pro",
+        });
+        const result = await model.generateContent([
+            {
+                fileData: {
+                    mimeType: uploadResponse.file.mimeType,
+                    fileUri: uploadResponse.file.uri
+                }
+            },
+            { text: "qual o valor exibido no leitor do relógio medidor de consumo." },
+        ]);
+        await unlink(tempFilePath);
+        return Number(result.response.text())
     }
 
     async confirmReadingDto(confirmReadingDto: ConfirmReadingDto): Promise<void> {
